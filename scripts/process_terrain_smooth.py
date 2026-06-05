@@ -31,42 +31,28 @@ def process_subject_perfect_terrain(subject_folder, total_grid_steps=240):
         # --- Data Cleansing & Alignment Pass ---
         hr_df = pd.read_csv(hr_path, header=None, names=['timestamp', 'hr'])
         
-        # 💡 FIXED TIME-ZONE ALIGNMENT MATH:
-        # Calculate exactly which 30-second epoch of the sleep study each heart rate row lands on.
-        # This preserves the true mapping coordinates even if the CSV file started hours early.
+        # Fixed Time-Zone Alignment Math
         hr_df['epoch_idx'] = np.floor((hr_df['timestamp'] - rec_start_ts) / 30).astype(int)
-        
-        # Keep ONLY rows where the heart rate timestamp falls inside the active window of the sleep study
         hr_df = hr_df[(hr_df['epoch_idx'] >= 0) & (hr_df['epoch_idx'] < len(stages))]
         
         if len(hr_df) == 0:
             print(f"Warning: Zero overlapping epochs found on Night {night}. Skipping.")
             continue
             
-        # Map the true sleep stages to our filtered timestamps
         hr_df['stage'] = hr_df['epoch_idx'].map(lambda idx: stages[idx])
-        
-        # Strip out un-scored artifact epochs (5)
         hr_df = hr_df[hr_df['stage'] != 5]
         
         if len(hr_df) == 0:
             continue
             
-        # 💡 CONVERT TO PURE NUMERIC ARRAY BEFORE SPLITTING
         # Map stages directly to altitudes for the whole night at once
         full_night_altitudes = hr_df['stage'].map(stage_altitude_map).fillna(8.0).values
-        
-        # 💡 MAJORITY-VOTE (MODE) TIME BUCKET RE-SAMPLER
-        # Splitting the raw 1D numeric array into 240 equal sequential time buckets
         chunks = np.array_split(full_night_altitudes, total_grid_steps)
         
         night_heights = []
         for chunk in chunks:
             if len(chunk) > 0:
-                # 🌟 Count the frequencies of each height value inside this specific time bucket
                 values, counts = np.unique(chunk, return_counts=True)
-                
-                # Find the value that appears most frequent (the statistical mode)
                 majority_height = values[np.argmax(counts)]
                 night_heights.append(float(majority_height))
             else:
@@ -76,8 +62,12 @@ def process_subject_perfect_terrain(subject_folder, total_grid_steps=240):
         
     height_grid = np.array(raw_matrix, dtype=float)
     
-    # Return the pure, un-blurred raw majority-vote data matrix to let frontend step-functions control formatting
-    return height_grid.tolist()
+    # 💡 CONTINUOUS NUMERICAL IMPUTATION:
+    # Applying a robust horizontal smoothing window (sigma=2.5) to blend the 
+    # sharp staircase transitions into a continuous numerical gradient.
+    smoothed_grid = ndimage.gaussian_filter(height_grid, sigma=[0.5, 2.5], mode='nearest')
+    
+    return smoothed_grid.tolist()
 
 # Target data path cohort setup
 subject_dir = "./data/00" 
@@ -85,10 +75,10 @@ subject_dir = "./data/00"
 if not os.path.exists("./public"):
     os.makedirs("./public")
 
-print("Processing subject matrix telemetry...")
+print("Processing subject matrix telemetry with continuous imputation...")
 heightmap_data = process_subject_perfect_terrain(subject_dir)
 
 with open("./public/sleep_terrain.json", "w") as f:
     json.dump({"heightmap": heightmap_data}, f)
 
-print(f"Perfect calibration matrix compiled successfully across {len(heightmap_data)} nights!")
+print(f"Imputed calibration matrix compiled successfully across {len(heightmap_data)} nights!")

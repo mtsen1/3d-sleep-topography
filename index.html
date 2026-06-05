@@ -3,31 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sleep Topography: Step-Function Threshold Coloring</title>
+    <title>Sleep Topography: Interactive Map Architecture</title>
     <style>
         body { 
-            margin: 0; padding: 0; background-color: #030306; color: #fff; 
+            margin: 0; padding: 0; background-color: #1a1b26; color: #fff; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; 
         }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
         
         #panel {
-            position: absolute; top: 25px; left: 25px; background: rgba(4, 4, 10, 0.95);
-            padding: 20px; border-radius: 10px; border: 1px solid #151525;
+            position: absolute; top: 25px; left: 25px; background: rgba(26, 27, 38, 0.90);
+            padding: 20px; border-radius: 10px; border: 1px solid #2f324a;
             backdrop-filter: blur(8px); z-index: 10; max-width: 290px; pointer-events: none;
         }
         h1 { margin: 0 0 4px 0; font-size: 0.95rem; letter-spacing: 2px; text-transform: uppercase; color: #e2e4f0; }
         p { margin: 0; font-size: 0.7rem; color: #585d7a; line-height: 1.4; }
         
         #stage-legend {
-            position: absolute; bottom: 25px; right: 25px; background: rgba(4, 4, 10, 0.95);
-            padding: 15px 18px; border-radius: 10px; border: 1px solid #151525;
+            position: absolute; bottom: 25px; right: 25px; background: rgba(26, 27, 38, 0.90);
+            padding: 15px 18px; border-radius: 10px; border: 1px solid #2f324a;
             backdrop-filter: blur(8px); z-index: 10; min-width: 200px; pointer-events: none;
         }
         .legend-title { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #a0a5c0; margin-bottom: 10px; }
         .legend-item { display: flex; align-items: center; font-size: 0.7rem; margin-bottom: 6px; color: #b2b7cf; }
         .legend-item:last-child { margin-bottom: 0; }
         .color-pill { width: 24px; height: 10px; border-radius: 2px; margin-right: 12px; }
+
+        #hover-tooltip {
+            position: absolute; display: none; background: rgba(11, 11, 20, 0.95);
+            border: 1px solid #3f5b96; padding: 8px 12px; border-radius: 6px;
+            font-size: 0.65rem; color: #e2e4f0; pointer-events: none; z-index: 100;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5); font-weight: 500;
+        }
+        .tooltip-time { color: #a0a5c0; font-weight: bold; margin-bottom: 2px; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -36,16 +44,21 @@
 
     <div id="panel">
         <h1>Sleep Topography</h1>
-        <p>A solid 3D landscape modeling structural sleep trends across consecutive nights.</p>
+        <p>A solid 3D topographic model tracking multi-night macro-architecture trends and continuous physiological signal boundaries.</p>
+    </div>
+
+    <div id="hover-tooltip">
+        <div class="tooltip-time" id="tooltip-time">H0.00</div>
+        <div id="tooltip-stage">Stage: Awake</div>
     </div>
 
     <div id="stage-legend">
         <div class="legend-title">Topographic Scale</div>
-        <div class="legend-item"><div class="color-pill" style="background: #e2b65d;"></div>W - Awake Peaks (18.0)</div>
-        <div class="legend-item"><div class="color-pill" style="background: #52828a;"></div>N1 - Light Transition (12.0)</div>
+        <div class="legend-item"><div class="color-pill" style="background: #e2b65d;"></div>W - Awake (18.0)</div>
+        <div class="legend-item"><div class="color-pill" style="background: #52828a;"></div>N1 - Sleep Onset (12.0)</div>
         <div class="legend-item"><div class="color-pill" style="background: #cd5c74;"></div>REM - Active Dream (10.0)</div>
-        <div class="legend-item"><div class="color-pill" style="background: #3f5b96;"></div>N2 - Restful Bedrock (8.0)</div>
-        <div class="legend-item"><div class="color-pill" style="background: #2d224d;"></div>N3 - Deep Slow Wave (1.5)</div>
+        <div class="legend-item"><div class="color-pill" style="background: #3f5b96;"></div>N2 - Intermediate Sleep (8.0)</div>
+        <div class="legend-item"><div class="color-pill" style="background: #2d224d;"></div>N3 - Deep Sleep (1.5)</div>
     </div>
 
     <div id="canvas-container"></div>
@@ -66,11 +79,36 @@
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
 
-        const ambientLight = new THREE.AmbientLight(0xffffff, 1.7); 
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.6); 
         scene.add(ambientLight);
-        const sunLight = new THREE.DirectionalLight(0xffffff, 0.3); 
+        const sunLight = new THREE.DirectionalLight(0xffffff, 0.4); 
         sunLight.position.set(20, 100, 30);
         scene.add(sunLight);
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let terrainMeshGlobal = null;
+        let mapWidthGlobal = 90;
+        
+        let rows = 7; 
+        let matrix = null;
+
+        const tooltipEl = document.getElementById('hover-tooltip');
+        const tooltipTime = document.getElementById('tooltip-time');
+        const tooltipStage = document.getElementById('tooltip-stage');
+
+        // 💡 NEW THICK 3D COLUMN POINTER:
+        // parameters: radiusTop, radiusBottom, height, radialSegments
+        const lineGeo = new THREE.CylinderGeometry(0.2, 0.2, 22, 6); 
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 });
+        const trackingWire = new THREE.Mesh(lineGeo, lineMat);
+
+        // Offset the cylinder mesh so its bottom sits exactly at Y = 0
+        lineGeo.translate(0, 11, 0); 
+        trackingWire.visible = false;
+        scene.add(trackingWire);
+        trackingWire.visible = false;
+        scene.add(trackingWire);
 
         function buildAxisRod(startVec, endVec) {
             const pathSpline = new THREE.LineCurve3(startVec, endVec);
@@ -85,7 +123,6 @@
             canvas.width = 512;
             canvas.height = 128;
             const ctx = canvas.getContext('2d');
-            
             ctx.clearRect(0, 0, 512, 128);
             ctx.font = 'bold 36px -apple-system, sans-serif'; 
             ctx.fillStyle = '#b2b7cf'; 
@@ -95,12 +132,8 @@
 
             const texture = new THREE.CanvasTexture(canvas);
             const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
-            
-            const textWidth = 24; 
-            const textHeight = 6;
-            const geometry = new THREE.PlaneGeometry(textWidth, textHeight);
+            const geometry = new THREE.PlaneGeometry(24, 6);
             const planeMesh = new THREE.Mesh(geometry, material);
-            
             planeMesh.rotation.set(-Math.PI / 2, 0, rotationY);
             planeMesh.position.copy(centerPosition);
             scene.add(planeMesh);
@@ -111,7 +144,6 @@
             canvas.width = 512;
             canvas.height = 128;
             const ctx = canvas.getContext('2d');
-            
             ctx.clearRect(0, 0, 512, 128);
             ctx.font = 'bold 36px -apple-system, sans-serif'; 
             ctx.fillStyle = '#b2b7cf'; 
@@ -121,12 +153,8 @@
 
             const texture = new THREE.CanvasTexture(canvas);
             const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
-            
-            const textWidth = 24; 
-            const textHeight = 6;
-            const geometry = new THREE.PlaneGeometry(textWidth, textHeight);
+            const geometry = new THREE.PlaneGeometry(24, 6);
             const planeMesh = new THREE.Mesh(geometry, material);
-            
             planeMesh.rotation.set(0, -Math.PI / 4, Math.PI / 2);
             planeMesh.position.copy(centerPosition);
             scene.add(planeMesh);
@@ -136,17 +164,12 @@
             for (let i = 0; i <= totalHours; i++) {
                 const ratio = i / totalHours;
                 const currentX = startX + ratio * (endX - startX);
-                
-                buildAxisRod(
-                    new THREE.Vector3(currentX, originY, originZ),
-                    new THREE.Vector3(currentX, originY, originZ + 1.2)
-                );
+                buildAxisRod(new THREE.Vector3(currentX, originY, originZ), new THREE.Vector3(currentX, originY, originZ + 1.2));
                 
                 const canvas = document.createElement('canvas');
                 canvas.width = 128;
                 canvas.height = 64;
                 const ctx = canvas.getContext('2d');
-                ctx.clearRect(0, 0, 128, 64);
                 ctx.font = 'bold 32px -apple-system, sans-serif';
                 ctx.fillStyle = '#6e7392'; 
                 ctx.textAlign = 'center';
@@ -156,7 +179,6 @@
                 const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
                 const geometry = new THREE.PlaneGeometry(4, 2);
                 const mesh = new THREE.Mesh(geometry, material);
-                
                 mesh.rotation.set(-Math.PI / 2, 0, 0);
                 mesh.position.set(currentX, originY + 0.05, originZ + 2.4);
                 scene.add(mesh);
@@ -166,128 +188,214 @@
         fetch('./public/sleep_terrain.json')
             .then(res => res.json())
             .then(payload => {
-                const matrix = payload.heightmap;
-                const rows = matrix.length;       
+                matrix = payload.heightmap;
+                rows = matrix.length;       
                 const segments = matrix[0].length; 
 
-                const mapWidth = 90;
+                const mapWidth = 90; mapWidthGlobal = mapWidth;
                 const mapDepth = 60;
-                
                 const leftX  = -mapWidth / 2;
                 const rightX = mapWidth / 2;
                 const frontZ = mapDepth / 2;
                 const backZ  = -mapDepth / 2;
 
                 const originX = leftX - 3;
-                const originY = 0.2; 
+                const originY = 0.0; 
                 const originZ = frontZ + 3;
                 const zMidpoint = (originZ + backZ) / 2;
 
-                // 🔴 X-Axis (Time of Night timeline)
-                buildAxisRod(
-                    new THREE.Vector3(originX, originY, originZ),
-                    new THREE.Vector3(rightX, originY, originZ)
-                );
-                const xMidpoint = (originX + rightX) / 2;
-                createParallelAxisLabel(
-                    "TIME OF NIGHT ➔", 
-                    new THREE.Vector3(xMidpoint, originY + 0.1, originZ + 5.5), 
-                    0
-                );
+                buildAxisRod(new THREE.Vector3(originX, originY, originZ), new THREE.Vector3(rightX, originY, originZ));
+                createParallelAxisLabel("TIME OF NIGHT ▶", new THREE.Vector3((originX + rightX) / 2, originY + 0.1, originZ + 5.5), 0);
                 buildTimelineTicks(originX, rightX, originY, originZ, 8);
 
-                // 🔵 Z-Axis (Calendar Day multi-night progression)
-                buildAxisRod(
-                    new THREE.Vector3(originX, originY, originZ),
-                    new THREE.Vector3(originX, originY, backZ)
-                );
-                createParallelAxisLabel(
-                    "⬅ CALENDAR DAY", 
-                    new THREE.Vector3(originX - 4.5, originY + 0.1, zMidpoint), 
-                    -Math.PI / 2
-                );
+                buildAxisRod(new THREE.Vector3(originX, originY, originZ), new THREE.Vector3(originX, originY, backZ));
+                createParallelAxisLabel("◀ CALENDAR DAY", new THREE.Vector3(originX - 4.5, originY + 0.1, zMidpoint), -Math.PI / 2);
 
-                // 🟢 Y-Axis (Vertical framework tube mapping height)
-                buildAxisRod(
-                    new THREE.Vector3(originX, originY, originZ),
-                    new THREE.Vector3(originX, 18.0, originZ)
-                );
-                createVerticalClimbingLabel(
-                    "SLEEP DEPTH ➔", 
-                    new THREE.Vector3(originX - 2.5, 9.0, originZ + 2.5)
-                );
+                buildAxisRod(new THREE.Vector3(originX, originY, originZ), new THREE.Vector3(originX, 18.0, originZ));
+                createVerticalClimbingLabel("◀ SLEEP DEPTH", new THREE.Vector3(originX - 2.5, 9.0, originZ + 2.5));
 
-                // Build Base High-Density Plane Mesh Geometry
-                const geometry = new THREE.PlaneGeometry(mapWidth, mapDepth, segments - 1, rows - 1);
-                const vertices = geometry.attributes.position.array;
-                const totalVertices = geometry.attributes.position.count;
-                const colorsArray = new Float32Array(totalVertices * 3);
-                
-                const colorN3    = new THREE.Color(0x2d224d); 
-                const colorN2    = new THREE.Color(0x3f5b96); 
-                const colorN1    = new THREE.Color(0x52828a); 
-                const colorREM   = new THREE.Color(0xcd5c74); 
-                const colorWake  = new THREE.Color(0xe2b65d); 
-
+                const computedGrid = [];
                 for (let r = 0; r < rows; r++) {
-                    const rawControlPoints = [];
+                    const nightPoints = [];
                     for (let s = 0; s < segments; s++) {
                         const targetX = leftX + (s / (segments - 1)) * mapWidth;
-                        const targetZ = backZ + (r / (rows - 1)) * mapDepth;
-                        rawControlPoints.push(new THREE.Vector3(targetX, matrix[r][s], targetZ));
+                        // 💡 FLIP DIRECTION: We map row 0 to frontZ instead of backZ so chronology moves forward.
+                        const targetZ = frontZ - (r / (rows - 1)) * mapDepth;
+                        nightPoints.push(new THREE.Vector3(targetX, matrix[r][s], targetZ));
                     }
+                    const nightSpline = new THREE.CatmullRomCurve3(nightPoints);
+                    nightSpline.tension = 0.35;
+                    computedGrid.push(nightSpline.getPoints(segments - 1));
+                }
 
-                    const timelineSpline = new THREE.CatmullRomCurve3(rawControlPoints);
-                    timelineSpline.tension = 0.15; 
-                    
-                    const highDensitySplinePoints = timelineSpline.getPoints(segments - 1);
+                // --- MESH 1: THE SMOOTH TOP LANDSCAPE ---
+                const topGeometry = new THREE.BufferGeometry();
+                const topPositions = [];
+                const topColors = [];
 
-                    for (let s = 0; s < segments; s++) {
-                        const vertexIdx = (r * segments + s) * 3;
-                        const currentHeight = highDensitySplinePoints[s].y;
+                const colorN3    = new THREE.Color(0x2d224d); 
+                const colorN2    = new THREE.Color(0x3f5b96); 
+                const colorREM   = new THREE.Color(0xcd5c74); 
+                const colorN1    = new THREE.Color(0x52828a); 
+                const colorWake  = new THREE.Color(0xe2b65d); 
+                const baseSlabColor = new THREE.Color(0x161622); 
 
-                        vertices[vertexIdx]     = highDensitySplinePoints[s].x;
-                        vertices[vertexIdx + 1] = currentHeight; 
-                        vertices[vertexIdx + 2] = highDensitySplinePoints[s].z;
+                function getStageColor(h) {
+                    if (h <= 1.5) return colorN3;
+                    if (h <= 8.0)  return colorN3.clone().lerp(colorN2, (h - 1.5) / 6.5);
+                    if (h <= 10.0) return colorN2.clone().lerp(colorREM, (h - 8.0) / 2.0);
+                    if (h <= 12.0) return colorREM.clone().lerp(colorN1, (h - 10.0) / 2.0);
+                    if (h <= 18.0) return colorN1.clone().lerp(colorWake, (h - 12.0) / 6.0);
+                    return colorWake;
+                }
 
-                        // 🌟 FIXED: STEP-FUNCTION THRESHOLD COLOR MAPPER
-                        // Evaluates heights categorically to remove deceptive multi-stage gradient bleeding
-                        const mixColor = new THREE.Color();
+                for (let r = 0; r < rows - 1; r++) {
+                    for (let s = 0; s < segments - 1; s++) {
+                        const pA = computedGrid[r][s];
+                        const pB = computedGrid[r][s+1];
+                        const pC = computedGrid[r+1][s];
+                        const pD = computedGrid[r+1][s+1];
 
-                        if (currentHeight <= 4.0) {
-                            mixColor.copy(colorN3);   // Pure Deep Slow Wave (1.5)
-                        } else if (currentHeight > 4.0 && currentHeight <= 9.0) {
-                            mixColor.copy(colorN2);   // Pure Restful Bedrock (8.0)
-                        } else if (currentHeight > 9.0 && currentHeight <= 11.0) {
-                            mixColor.copy(colorREM);  // Pure Active Dream REM (10.0)
-                        } else if (currentHeight > 11.0 && currentHeight <= 15.0) {
-                            mixColor.copy(colorN1);   // Pure Light Transition (12.0)
-                        } else {
-                            mixColor.copy(colorWake);  // Pure Awake Peaks (18.0)
-                        }
+                        topPositions.push(pA.x, pA.y, pA.z,  pC.x, pC.y, pC.z,  pB.x, pB.y, pB.z);
+                        topPositions.push(pB.x, pB.y, pB.z,  pC.x, pC.y, pC.z,  pD.x, pD.y, pD.z);
 
-                        colorsArray[vertexIdx]     = mixColor.r;
-                        colorsArray[vertexIdx + 1] = mixColor.g;
-                        colorsArray[vertexIdx + 2] = mixColor.b;
+                        const cA = getStageColor(pA.y), cB = getStageColor(pB.y), cC = getStageColor(pC.y), cD = getStageColor(pD.y);
+                        topColors.push(cA.r, cA.g, cA.b,  cC.r, cC.g, cC.b,  cB.r, cB.g, cB.b);
+                        topColors.push(cB.r, cB.g, cB.b,  cC.r, cC.g, cC.b,  cD.r, cD.g, cD.b);
                     }
                 }
-                
-                geometry.attributes.position.needsUpdate = true;
-                geometry.setAttribute('color', new THREE.BufferAttribute(colorsArray, 3));
-                geometry.computeVertexNormals();
 
-                const matteMaterial = new THREE.MeshStandardMaterial({
+                topGeometry.setAttribute('position', new THREE.Float32BufferAttribute(topPositions, 3));
+                topGeometry.setAttribute('color', new THREE.Float32BufferAttribute(topColors, 3));
+                topGeometry.computeVertexNormals();
+
+                const topMaterial = new THREE.MeshStandardMaterial({
                     vertexColors: true,
-                    roughness: 0.85, 
-                    metalness: 0.05, 
+                    roughness: 0.6, 
+                    metalness: 0.1, 
                     flatShading: false,
                     side: THREE.DoubleSide
                 });
 
-                const terrainMesh = new THREE.Mesh(geometry, matteMaterial);
-                scene.add(terrainMesh);
+                topMaterial.onBeforeCompile = (shader) => {
+                    shader.vertexShader = shader.vertexShader.replace(
+                        `#include <color_pars_vertex>`,
+                        `#include <color_pars_vertex>\nvarying vec3 vWorldPos;`
+                    );
+                    shader.vertexShader = shader.vertexShader.replace(
+                        `#include <color_vertex>`,
+                        `#include <color_vertex>\nvWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;`
+                    );
+                    shader.fragmentShader = shader.fragmentShader.replace(
+                        `#include <color_pars_fragment>`,
+                        `#include <color_pars_fragment>\nvarying vec3 vWorldPos;`
+                    );
+                    shader.fragmentShader = shader.fragmentShader.replace(
+                        `#include <color_fragment>`,
+                        `
+                        #include <color_fragment>
+                        float heightInterval = 2.0; 
+                        float thickness = 0.02; 
+                        float fraction = mod(vWorldPos.y, heightInterval);
+                        if (fraction < thickness || fraction > (heightInterval - thickness)) {
+                            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0, 1.0, 1.0), 0.6);
+                        }
+                        `
+                    );
+                };
+
+                const topMesh = new THREE.Mesh(topGeometry, topMaterial);
+                scene.add(topMesh);
+                terrainMeshGlobal = topMesh;
+
+
+                // --- MESH 2: THE BASE SLAB SKIRTS ---
+                const baseGeometry = new THREE.BufferGeometry();
+                const basePositions = [];
+
+                for (let s = 0; s < segments - 1; s++) {
+                    const pfA = computedGrid[rows-1][s], pfB = computedGrid[rows-1][s+1];
+                    basePositions.push(pfA.x, pfA.y, pfA.z,  pfB.x, 0, pfB.z,  pfB.x, pfB.y, pfB.z);
+                    basePositions.push(pfA.x, pfA.y, pfA.z,  pfA.x, 0, pfA.z,  pfB.x, 0, pfB.z);
+                    
+                    const pbA = computedGrid[0][s], pbB = computedGrid[0][s+1];
+                    basePositions.push(pbA.x, pbA.y, pbA.z,  pbB.x, pbB.y, pbB.z,  pbB.x, 0, pbB.z);
+                    basePositions.push(pbA.x, pbA.y, pbA.z,  pbB.x, 0, pbB.z,      pbA.x, 0, pbA.z);
+                }
+
+                for (let r = 0; r < rows - 1; r++) {
+                    const plA = computedGrid[r][0], plB = computedGrid[r+1][0];
+                    basePositions.push(plA.x, plA.y, plA.z,  plB.x, plB.y, plB.z,  plB.x, 0, plB.z);
+                    basePositions.push(plA.x, plA.y, plA.z,  plB.x, 0, plB.z,      plA.x, 0, plA.z);
+
+                    const prA = computedGrid[r][segments-1], prB = computedGrid[r+1][segments-1];
+                    basePositions.push(prA.x, prA.y, prA.z,  prB.x, 0, prB.z,  prB.x, prB.y, prB.z);
+                    basePositions.push(prA.x, prA.y, prA.z,  prA.x, 0, prA.z,  prB.x, 0, prB.z);
+                }
+
+                basePositions.push(leftX, 0, frontZ,  rightX, 0, backZ,   leftX, 0, backZ);
+                basePositions.push(leftX, 0, frontZ,  rightX, 0, frontZ,  rightX, 0, backZ);
+
+                baseGeometry.setAttribute('position', new THREE.Float32BufferAttribute(basePositions, 3));
+                baseGeometry.computeVertexNormals();
+
+                const baseMaterial = new THREE.MeshStandardMaterial({
+                    color: baseSlabColor,
+                    roughness: 0.5,
+                    metalness: 0.2,
+                    flatShading: true,
+                    side: THREE.DoubleSide
+                });
+                const baseMesh = new THREE.Mesh(baseGeometry, baseMaterial);
+                scene.add(baseMesh);
             })
-            .catch(err => console.error("Production framework initialization exception: ", err));
+            .catch(err => console.error("Error building components: ", err));
+
+        // INTERACTIVE MOUSE TRACKING SYSTEM
+        window.addEventListener('mousemove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            if (terrainMeshGlobal) {
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObject(terrainMeshGlobal);
+
+                if (intersects.length > 0) {
+                    const hitPoint = intersects[0].point;
+                    
+                    trackingWire.position.set(hitPoint.x, 0, hitPoint.z);
+                    trackingWire.visible = true;
+
+                    const normalizedX = (hitPoint.x + (mapWidthGlobal / 2)) / mapWidthGlobal;
+                    const calculatedHours = Math.max(0, Math.min(8, normalizedX * 8));
+                    
+                    const mapDepth = 60;
+                    const frontZ = mapDepth / 2;
+                    
+                    // 💡 FLIP INTERACTION MATH: Track progress from frontZ down toward backZ instead of back-to-front
+                    const normalizedZ = (frontZ - hitPoint.z) / mapDepth;
+                    
+                    const exactDayIndex = Math.floor(normalizedZ * rows);
+                    const displayDayNum = Math.max(1, Math.min(rows, exactDayIndex + 1));
+
+                    let stageText = "Awake";
+                    if (hitPoint.y <= 3.5) stageText = "N3 (Deep Sleep)";
+                    else if (hitPoint.y <= 9.0) stageText = "N2 (Intermediate Sleep)";
+                    else if (hitPoint.y <= 11.0) stageText = "REM (Active Dream)";
+                    else if (hitPoint.y <= 14.0) stageText = "N1 (Sleep Onset)";
+
+                    tooltipTime.innerText = `Night ${displayDayNum} | Hour ${calculatedHours.toFixed(2)}`;
+                    tooltipStage.innerText = `State: ${stageText}`;
+                    
+                    tooltipEl.style.left = `${event.clientX + 15}px`;
+                    tooltipEl.style.top = `${event.clientY + 15}px`;
+                    tooltipEl.style.display = 'block';
+                } else {
+                    trackingWire.visible = false;
+                    tooltipEl.style.display = 'none';
+                }
+            }
+        });
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
